@@ -49,7 +49,9 @@ class LMDataModule:
         self.val_split_seed = val_split_seed
         self.add_eos = add_eos
         self.batch_size = batch_size
-        self.batch_size_eval = batch_size_eval if batch_size_eval is not None else self.batch_size
+        self.batch_size_eval = (
+            batch_size_eval if batch_size_eval is not None else self.batch_size
+        )
         self.num_workers = num_workers
         self.loader_workers = loader_workers
         self.shuffle = shuffle
@@ -74,13 +76,17 @@ class LMDataModule:
         self.vocab_size = len(self.tokenizer)
         self.dataset_train, self.dataset_val, self.dataset_test = [
             LMDataset(
-                concat_ids[split], seq_len=self.max_length, llama2=(self.tokenizer_name == "meta-llama/Llama-2-7b-hf")
+                concat_ids[split],
+                seq_len=self.max_length,
+                llama2=(self.tokenizer_name == "meta-llama/Llama-2-7b-hf"),
             )
             for split in ["train", "validation", "test"]
         ]
 
     def process_dataset(self):
-        cache_dir = None if self.cache_dir is None else self.cache_dir / self._cache_dir_name
+        cache_dir = (
+            None if self.cache_dir is None else self.cache_dir / self._cache_dir_name
+        )
 
         if cache_dir is not None:
             if cache_dir.is_dir():
@@ -93,7 +99,9 @@ class LMDataModule:
 
         # https://github.com/stanford-crfm/mistral/blob/main/src/corpora/auto.py
         if "validation" not in raw_datasets:
-            assert "train" in raw_datasets, "You must have train in raw_datasets to make a validation raw_datasets"
+            assert "train" in raw_datasets, (
+                "You must have train in raw_datasets to make a validation raw_datasets"
+            )
             raw_datasets = raw_datasets["train"].train_test_split(
                 test_size=self.val_ratio,
                 seed=self.val_split_seed,
@@ -109,7 +117,9 @@ class LMDataModule:
         if self.add_eos:
             add_eos = lambda seq: (seq + tokenizer.eos_token) if seq else seq
             add_eos_batched = lambda seqs: [add_eos(seq) for seq in seqs]
-            tokenize = lambda example: tokenizer(add_eos_batched(example[text_column_name]))
+            tokenize = lambda example: tokenizer(
+                add_eos_batched(example[text_column_name])
+            )
         else:
             tokenize = lambda example: tokenizer(example[text_column_name])
 
@@ -117,7 +127,9 @@ class LMDataModule:
 
         def tokenize_concat(examples):
             # We just need 'input_ids', not 'attention_mask' (since it's all 1)
-            input_ids = np.fromiter(chain(*tokenize(examples)["input_ids"]), dtype=dtype)
+            input_ids = np.fromiter(
+                chain(*tokenize(examples)["input_ids"]), dtype=dtype
+            )
             # Need to return a list since we're doing batched processing
             return {"input_ids": [input_ids], "len": [len(input_ids)]}
 
@@ -139,7 +151,12 @@ class LMDataModule:
                 mm = mmap.mmap(f.fileno(), 0)
                 start_idx = example["len_offset"] - len(example["input_ids"])
                 array_len = len(example["input_ids"])
-                arr = np.ndarray((array_len,), dtype=dtype, buffer=mm, offset=np.dtype(dtype).itemsize * start_idx)
+                arr = np.ndarray(
+                    (array_len,),
+                    dtype=dtype,
+                    buffer=mm,
+                    offset=np.dtype(dtype).itemsize * start_idx,
+                )
                 arr[:] = example["input_ids"]
                 mm.flush()
 
@@ -151,7 +168,15 @@ class LMDataModule:
 
             # Need to create the file with this specific size first
             # https://ostechnix.com/create-files-certain-size-linux/
-            subprocess.run(["truncate", "-s", str(array_len * np.dtype(dtype).itemsize), str(filename)], check=True)
+            subprocess.run(
+                [
+                    "truncate",
+                    "-s",
+                    str(array_len * np.dtype(dtype).itemsize),
+                    str(filename),
+                ],
+                check=True,
+            )
 
             tokenized_datasets[name].map(
                 write_ids_to_disk,
@@ -160,7 +185,9 @@ class LMDataModule:
                 num_proc=max(self.num_workers, 1),
                 desc="Concatenating examples",
             )
-            concat_ids[name] = np.memmap(filename, dtype=dtype, mode="r", shape=(array_len,))
+            concat_ids[name] = np.memmap(
+                filename, dtype=dtype, mode="r", shape=(array_len,)
+            )
 
         if cache_dir is not None:
             self._save_to_cache(concat_ids, tokenizer, cache_dir)
@@ -182,7 +209,8 @@ class LMDataModule:
         assert cache_dir.is_dir()
         master_print(f"Load from cache at {str(cache_dir)}")
         concat_ids = {
-            split: np.load(cache_dir / f"{split}.npy", mmap_mode="r") for split in ["train", "validation", "test"]
+            split: np.load(cache_dir / f"{split}.npy", mmap_mode="r")
+            for split in ["train", "validation", "test"]
         }
         with open(cache_dir / "tokenizer.pkl", "rb") as f:
             tokenizer = pickle.load(f)
@@ -204,17 +232,28 @@ class LMDataModule:
             shuffle = self.shuffle
             sampler = None
 
-        return self._data_loader(self.dataset_train, batch_size=self.batch_size, shuffle=shuffle, sampler=sampler)
+        return self._data_loader(
+            self.dataset_train,
+            batch_size=self.batch_size,
+            shuffle=shuffle,
+            sampler=sampler,
+        )
 
-    def val_dataloader(self, *args: Any, **kwargs: Any) -> Union[DataLoader, List[DataLoader]]:
+    def val_dataloader(
+        self, *args: Any, **kwargs: Any
+    ) -> Union[DataLoader, List[DataLoader]]:
         """The val dataloader"""
         return self._data_loader(self.dataset_val, batch_size=self.batch_size_eval)
 
-    def test_dataloader(self, *args: Any, **kwargs: Any) -> Union[DataLoader, List[DataLoader]]:
+    def test_dataloader(
+        self, *args: Any, **kwargs: Any
+    ) -> Union[DataLoader, List[DataLoader]]:
         """The test dataloader"""
         return self._data_loader(self.dataset_test, batch_size=self.batch_size_eval)
 
-    def _data_loader(self, dataset: Dataset, batch_size: int, shuffle: bool = False, sampler=None) -> DataLoader:
+    def _data_loader(
+        self, dataset: Dataset, batch_size: int, shuffle: bool = False, sampler=None
+    ) -> DataLoader:
         return DataLoader(
             dataset,
             batch_size=batch_size,

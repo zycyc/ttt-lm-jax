@@ -39,9 +39,13 @@ class OptimizerFactory(object):
     def get_optimizer(cls, config, weight_decay_mask=None):
         config = cls.get_default_config(config)
         if config.type == "palm":
-            optimizer, optimizer_info = PalmOptimizerFactory.get_optimizer(config.palm_optimizer, weight_decay_mask)
+            optimizer, optimizer_info = PalmOptimizerFactory.get_optimizer(
+                config.palm_optimizer, weight_decay_mask
+            )
         elif config.type == "adamw":
-            optimizer, optimizer_info = AdamWOptimizerFactory.get_optimizer(config.adamw_optimizer, weight_decay_mask)
+            optimizer, optimizer_info = AdamWOptimizerFactory.get_optimizer(
+                config.adamw_optimizer, weight_decay_mask
+            )
         else:
             raise ValueError(f"Unknown optimizer type: {config.type}")
 
@@ -87,7 +91,8 @@ class PalmOptimizerFactory(object):
             return -multiplier * jnp.square(learning_rate_schedule(step))
 
         optimizer_info = dict(
-            learning_rate_schedule=learning_rate_schedule, weight_decay_schedule=weight_decay_schedule
+            learning_rate_schedule=learning_rate_schedule,
+            weight_decay_schedule=weight_decay_schedule,
         )
 
         optimizer = optax.chain(
@@ -155,10 +160,13 @@ class AdamWOptimizerFactory(object):
                     decay_rate=config.b2,
                     factored=False,
                     clipping_threshold=None,
-                    dtype_momentum=(jnp.bfloat16 if config.bf16_momentum else jnp.float32),
+                    dtype_momentum=(
+                        jnp.bfloat16 if config.bf16_momentum else jnp.float32
+                    ),
                 ),
                 optax_add_scheduled_weight_decay(
-                    lambda step: -learning_rate_schedule(step) * config.weight_decay, weight_decay_mask
+                    lambda step: -learning_rate_schedule(step) * config.weight_decay,
+                    weight_decay_mask,
                 ),
             )
         else:
@@ -193,8 +201,12 @@ def optax_add_scheduled_weight_decay(schedule_fn, mask=None):
             raise ValueError("Params cannot be None for weight decay!")
 
         weight_decay = schedule_fn(state.count)
-        updates = jax.tree_util.tree_map(lambda g, p: g + weight_decay * p, updates, params)
-        return updates, OptaxScheduledWeightDecayState(count=optax.safe_int32_increment(state.count))
+        updates = jax.tree_util.tree_map(
+            lambda g, p: g + weight_decay * p, updates, params
+        )
+        return updates, OptaxScheduledWeightDecayState(
+            count=optax.safe_int32_increment(state.count)
+        )
 
     if mask is not None:
         return optax.masked(optax.GradientTransformation(init_fn, update_fn), mask)

@@ -108,7 +108,10 @@ def make_shard_and_gather_fns(partition_specs, dtype_specs=None):
 
     def make_to_dtype_fn(dtype_spec):
         def to_dtype(tensor):
-            if dtype_specs in float_dtypes and getattr(tensor, "dtype", None) in float_dtypes:
+            if (
+                dtype_specs in float_dtypes
+                and getattr(tensor, "dtype", None) in float_dtypes
+            ):
                 # Convert all float tensors to the same dtype
                 return tensor.astype(dtype_specs)
             elif hasattr(dtype_spec, "dtype") and hasattr(tensor, "dtype"):
@@ -118,7 +121,11 @@ def make_shard_and_gather_fns(partition_specs, dtype_specs=None):
         return to_dtype
 
     def make_shard_fn(partition_spec, dtype_spec=None):
-        jax_shard_function = pjit(make_to_dtype_fn(dtype_spec), in_shardings=None, out_shardings=partition_spec)
+        jax_shard_function = pjit(
+            make_to_dtype_fn(dtype_spec),
+            in_shardings=None,
+            out_shardings=partition_spec,
+        )
 
         def shard_fn(tensor):
             return jax_shard_function(tensor).block_until_ready()
@@ -126,7 +133,11 @@ def make_shard_and_gather_fns(partition_specs, dtype_specs=None):
         return shard_fn
 
     def make_gather_fn(partition_spec, dtype_spec=None):
-        jax_gather_fn = pjit(make_to_dtype_fn(dtype_spec), in_shardings=partition_spec, out_shardings=None)
+        jax_gather_fn = pjit(
+            make_to_dtype_fn(dtype_spec),
+            in_shardings=partition_spec,
+            out_shardings=None,
+        )
 
         def gather_fn(tensor):
             return jax.device_get(jax_gather_fn(tensor))
@@ -138,7 +149,9 @@ def make_shard_and_gather_fns(partition_specs, dtype_specs=None):
         gather_fns = jax.tree_util.tree_map(make_gather_fn, partition_specs)
     else:
         shard_fns = jax.tree_util.tree_map(make_shard_fn, partition_specs, dtype_specs)
-        gather_fns = jax.tree_util.tree_map(make_gather_fn, partition_specs, dtype_specs)
+        gather_fns = jax.tree_util.tree_map(
+            make_gather_fn, partition_specs, dtype_specs
+        )
     return shard_fns, gather_fns
 
 
@@ -259,11 +272,16 @@ def cross_entropy_loss_and_accuracy(logits, tokens, valid=None):
     valid_text_length = jnp.maximum(jnp.sum(valid, axis=-1), 1e-10)
     logits = logits.astype(jnp.float32)  # for numerical stability
     token_log_prob = jnp.squeeze(
-        jnp.take_along_axis(jax.nn.log_softmax(logits, axis=-1), jnp.expand_dims(tokens, -1), axis=-1), -1
+        jnp.take_along_axis(
+            jax.nn.log_softmax(logits, axis=-1), jnp.expand_dims(tokens, -1), axis=-1
+        ),
+        -1,
     )
     token_log_prob = jnp.where(valid > 0.0, token_log_prob, jnp.array(0.0))
     loss = -jnp.mean(jnp.sum(token_log_prob, axis=-1) / valid_text_length)
-    correct = jnp.where(valid > 0.0, jnp.argmax(logits, axis=-1) == tokens, jnp.array(False))
+    correct = jnp.where(
+        valid > 0.0, jnp.argmax(logits, axis=-1) == tokens, jnp.array(False)
+    )
     accuracy = jnp.mean(jnp.sum(correct, axis=-1) / valid_text_length)
     return loss, accuracy
 
@@ -347,7 +365,10 @@ def named_tree_map(f, tree, *rest, is_leaf=None, sep=None):
     f takes both the name (path) and the tree leaf as input.
     """
     return jax.tree_util.tree_map_with_path(
-        lambda path, x, *r: f(tree_path_to_string(path, sep=sep), x, *r), tree, *rest, is_leaf=is_leaf
+        lambda path, x, *r: f(tree_path_to_string(path, sep=sep), x, *r),
+        tree,
+        *rest,
+        is_leaf=is_leaf,
     )
 
 
@@ -416,9 +437,16 @@ def log_ttt_stats(layer, ttt_stats_layer, x_axis, step):
     ttt_loss_mse_step_1 = ttt_stats_layer[3]
 
     fig, ax = plt.subplots()
-    ax.plot(x_axis, ssl_tgt_last_in_mini_batch_from_mean_mse, label="$\\|E[Y_{ssl}]-Y_{ssl}\\|^2$", color="green")
+    ax.plot(
+        x_axis,
+        ssl_tgt_last_in_mini_batch_from_mean_mse,
+        label="$\\|E[Y_{ssl}]-Y_{ssl}\\|^2$",
+        color="green",
+    )
     ax.plot(x_axis, ttt_loss_mse_init, label="$\mathcal{L}(x_t; W_0)$", color="orange")
-    ax.plot(x_axis, ttt_loss_mse_step_0, label="$\mathcal{L}(x_t; W_{t-b})$", color="blue")
+    ax.plot(
+        x_axis, ttt_loss_mse_step_0, label="$\mathcal{L}(x_t; W_{t-b})$", color="blue"
+    )
     ax.plot(x_axis, ttt_loss_mse_step_1, label="$\mathcal{L}(x_t; W_{t})$", color="red")
     ax.set_ylabel("TTT Loss")
     ax.set_xlabel("Position in Sequence")

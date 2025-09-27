@@ -66,7 +66,6 @@ FLAGS, FLAGS_DEF = mlxu.define_flags_with_default(
 
 
 def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
-
     if accum_steps == 1:
 
         def train_step(train_state, rng, batch, ttt_lr_mult, output_ttt_stats=False):
@@ -84,7 +83,9 @@ def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
                 )
                 logits = outputs.logits
                 ttt_stats = outputs.ttt_stats
-                loss, _ = cross_entropy_loss_and_accuracy(logits, batch["target_tokens"], batch["loss_masks"])
+                loss, _ = cross_entropy_loss_and_accuracy(
+                    logits, batch["target_tokens"], batch["loss_masks"]
+                )
                 return loss, ttt_stats
 
             grad_fn = jax.value_and_grad(loss_and_accuracy, has_aux=True)
@@ -94,7 +95,14 @@ def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
             learning_rate = optimizer_info["learning_rate_schedule"](train_state.step)
             grads_norm = global_norm(grads)
 
-            return (train_state, loss, ttt_stats, grads_norm, learning_rate, rng_generator())
+            return (
+                train_state,
+                loss,
+                ttt_stats,
+                grads_norm,
+                learning_rate,
+                rng_generator(),
+            )
 
     elif accum_steps > 1:
 
@@ -118,7 +126,9 @@ def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
                     logits = outputs.logits
                     ttt_stats = outputs.ttt_stats
                     loss, _ = cross_entropy_loss_and_accuracy(
-                        logits, micro_batch["target_tokens"], micro_batch["loss_masks"]
+                        logits,
+                        micro_batch["target_tokens"],
+                        micro_batch["loss_masks"],
                     )
                     return loss, ttt_stats
 
@@ -128,9 +138,13 @@ def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
                 carry_new = {"sum_grads": sum_grads}
                 return carry_new, (loss, ttt_stats)
 
-            sum_grads = jax.tree_util.tree_map(lambda x: jnp.zeros(x.shape, x.dtype), train_state.params)
+            sum_grads = jax.tree_util.tree_map(
+                lambda x: jnp.zeros(x.shape, x.dtype), train_state.params
+            )
             carry_init = {"sum_grads": sum_grads}
-            batch = tree_map(lambda x: x.reshape(FLAGS.accum_steps, -1, *x.shape[1:]), batch)
+            batch = tree_map(
+                lambda x: x.reshape(FLAGS.accum_steps, -1, *x.shape[1:]), batch
+            )
             carry_new, outputs = jax.lax.scan(computation, carry_init, batch)
             loss, ttt_stats = outputs
             loss = jnp.mean(loss)
@@ -138,13 +152,22 @@ def make_train_step_fn(model, optimizer_info, model_config, accum_steps=1):
                 ttt_stats = tree_map(lambda x: jnp.mean(x, axis=0), ttt_stats)
             else:
                 ttt_stats = None
-            grads = jax.tree_util.tree_map(lambda x: x / FLAGS.accum_steps, carry_new["sum_grads"])
+            grads = jax.tree_util.tree_map(
+                lambda x: x / FLAGS.accum_steps, carry_new["sum_grads"]
+            )
 
             train_state = train_state.apply_gradients(grads=grads)
             learning_rate = optimizer_info["learning_rate_schedule"](train_state.step)
             grads_norm = global_norm(grads)
 
-            return (train_state, loss, ttt_stats, grads_norm, learning_rate, rng_generator())
+            return (
+                train_state,
+                loss,
+                ttt_stats,
+                grads_norm,
+                learning_rate,
+                rng_generator(),
+            )
 
     else:
         raise ValueError(f"Accum steps must >= 1, got {accum_steps}")
@@ -157,9 +180,14 @@ def make_eval_step_fn(model, model_config):
         rng_generator = JaxRNG(rng)
         batch = with_sharding_constraint(batch, PS(("dp", "fsdp")))
         logits = model.apply(
-            train_state.params, batch["input_tokens"], deterministic=True, rngs=rng_generator(model_config.rng_keys())
+            train_state.params,
+            batch["input_tokens"],
+            deterministic=True,
+            rngs=rng_generator(model_config.rng_keys()),
         ).logits
-        loss, accuracy = cross_entropy_loss_and_accuracy(logits, batch["target_tokens"], batch["loss_masks"])
+        loss, accuracy = cross_entropy_loss_and_accuracy(
+            logits, batch["target_tokens"], batch["loss_masks"]
+        )
         metrics = dict(eval_loss=loss, eval_accuracy=accuracy)
         return rng_generator(), metrics
 
@@ -180,15 +208,23 @@ def make_sharded_functions(model, optimizer, optimizer_info, model_config):
         )
         return TrainState.create(params=params, tx=optimizer, apply_fn=None)
 
-    train_step = make_train_step_fn(model, optimizer_info, model_config, FLAGS.accum_steps)
+    train_step = make_train_step_fn(
+        model, optimizer_info, model_config, FLAGS.accum_steps
+    )
 
     train_state_shapes = jax.eval_shape(init_fn, next_rng())
 
-    train_state_partition = match_partition_rules(model_config.get_partition_rules(), train_state_shapes)
+    train_state_partition = match_partition_rules(
+        model_config.get_partition_rules(), train_state_shapes
+    )
 
-    shard_fns, gather_fns = make_shard_and_gather_fns(train_state_partition, train_state_shapes)
+    shard_fns, gather_fns = make_shard_and_gather_fns(
+        train_state_partition, train_state_shapes
+    )
 
-    sharded_init_fn = pjit(init_fn, in_shardings=PS(), out_shardings=train_state_partition)
+    sharded_init_fn = pjit(
+        init_fn, in_shardings=PS(), out_shardings=train_state_partition
+    )
 
     sharded_create_trainstate_from_params = pjit(
         create_trainstate_from_params,
@@ -216,10 +252,22 @@ def make_sharded_functions(model, optimizer, optimizer_info, model_config):
     )
 
 
-def make_save_checkpoint(checkpointer, gather_fns, variant, flags_config_dict, model_config, global_batch_size):
+def make_save_checkpoint(
+    checkpointer,
+    gather_fns,
+    variant,
+    flags_config_dict,
+    model_config,
+    global_batch_size,
+):
     def save_checkpoint(train_state, train_loader, milestone=False):
         step = int(jax.device_get(train_state.step))
-        metadata = dict(step=step, variant=variant, flags=flags_config_dict, model_config=model_config.to_dict())
+        metadata = dict(
+            step=step,
+            variant=variant,
+            flags=flags_config_dict,
+            model_config=model_config.to_dict(),
+        )
         sampler_state_dict = {
             "random_state": train_loader.sampler.state_dict()["random_state"],
             "shuffle_log": train_loader.sampler.state_dict()["shuffle_log"],
@@ -237,7 +285,6 @@ def make_save_checkpoint(checkpointer, gather_fns, variant, flags_config_dict, m
 
 
 def make_get_ttt_lr_mult(model_config):
-
     if (
         hasattr(model_config, "ttt_base_lr_init")
         and model_config.ttt_base_lr_init > 0
@@ -248,10 +295,12 @@ def make_get_ttt_lr_mult(model_config):
         ttt_lr_mult_peak = model_config.ttt_base_lr
 
         def get_ttt_lr_mult(step):
-            ttt_lr_mult = ttt_lr_mult_init + min(1.0, (step - 1) / ttt_lr_mult_warmup_steps) * (
-                ttt_lr_mult_peak - ttt_lr_mult_init
+            ttt_lr_mult = ttt_lr_mult_init + min(
+                1.0, (step - 1) / ttt_lr_mult_warmup_steps
+            ) * (ttt_lr_mult_peak - ttt_lr_mult_init)
+            ttt_lr_mult = (
+                ttt_lr_mult / ttt_lr_mult_peak * jnp.ones((1,), dtype=jnp.bfloat16)
             )
-            ttt_lr_mult = ttt_lr_mult / ttt_lr_mult_peak * jnp.ones((1,), dtype=jnp.bfloat16)
             return ttt_lr_mult
 
     else:
@@ -295,14 +344,20 @@ def initialize_or_resume(
 
         if FLAGS.load_part == "trainstate":
             start_step = int(jax.device_get(train_state.step)) + 1
-            master_print(f"Resuming training from checkpoint at step {start_step - 1}...")
+            master_print(
+                f"Resuming training from checkpoint at step {start_step - 1}..."
+            )
             dataset_pkl_filename = (
                 f"step_{int(FLAGS.resume_step)}/dataset_{int(FLAGS.resume_step)}.pkl"
                 if FLAGS.resume_step
                 else "dataset.pkl"
             )
-            dataset_resume_dir = osp.join(FLAGS.exp_dir, FLAGS.resume_exp_name, dataset_pkl_filename)
-            train_loader.sampler.load_state_dict(deepcopy(mlxu.load_pickle(dataset_resume_dir)))
+            dataset_resume_dir = osp.join(
+                FLAGS.exp_dir, FLAGS.resume_exp_name, dataset_pkl_filename
+            )
+            train_loader.sampler.load_state_dict(
+                deepcopy(mlxu.load_pickle(dataset_resume_dir))
+            )
 
         if FLAGS.is_rollback_reshuffle:
             train_loader.sampler.is_rollback = True
@@ -373,12 +428,15 @@ def main(argv):
     if master_process:
         wandb.init(project="TTT-LM", config=flags_config_dict, name=FLAGS.exp_name)
     ckpt_dir = osp.join(FLAGS.exp_dir, FLAGS.exp_name)
-    checkpointer = StreamingCheckpointer(FLAGS.checkpointer, ckpt_dir, enable=master_process)
+    checkpointer = StreamingCheckpointer(
+        FLAGS.checkpointer, ckpt_dir, enable=master_process
+    )
 
     # Create model and optimizer
     model = CausalLM(model_config, dtype=get_float_dtype_by_name(FLAGS.dtype))
     optimizer, optimizer_info = OptimizerFactory.get_optimizer(
-        FLAGS.optimizer, get_weight_decay_mask(model_config.get_weight_decay_exclusions())
+        FLAGS.optimizer,
+        get_weight_decay_mask(model_config.get_weight_decay_exclusions()),
     )
 
     # Helper function for dynamic TTT learning rate
@@ -396,7 +454,12 @@ def main(argv):
     ) = make_sharded_functions(model, optimizer, optimizer_info, model_config)
 
     save_checkpoint = make_save_checkpoint(
-        checkpointer, gather_fns, variant, flags_config_dict, model_config, global_batch_size
+        checkpointer,
+        gather_fns,
+        variant,
+        flags_config_dict,
+        model_config,
+        global_batch_size,
     )
 
     mesh = model_config.get_jax_mesh(FLAGS.mesh_dim)
@@ -428,10 +491,14 @@ def main(argv):
             for eval_batch in tqdm(val_loader, disable=not master_process):
                 for k in eval_batch.keys():
                     eval_batch[k] = eval_batch[k].numpy()
-                sharded_rng, eval_metrics = sharded_eval_step(train_state, sharded_rng, eval_batch)
+                sharded_rng, eval_metrics = sharded_eval_step(
+                    train_state, sharded_rng, eval_batch
+                )
                 eval_metric_list.append(eval_metrics)
 
-            val_loss_avg = average_metrics(process_allgather(eval_metric_list))["eval_loss"].item()
+            val_loss_avg = average_metrics(process_allgather(eval_metric_list))[
+                "eval_loss"
+            ].item()
             master_print(f"Eval Loss: {val_loss_avg:.4f}")
             exit(0)
 
@@ -464,7 +531,11 @@ def main(argv):
                         if FLAGS.resume_step
                         else "dataset_state.pkl"
                     )
-                    dataset_resume_dir = osp.join(FLAGS.exp_dir, FLAGS.resume_exp_name, dataset_pkl_filename)
+                    dataset_resume_dir = osp.join(
+                        FLAGS.exp_dir,
+                        FLAGS.resume_exp_name,
+                        dataset_pkl_filename,
+                    )
                     mlxu.save_pickle(deepcopy(sampler_state_dict), dataset_resume_dir)
                 is_rollback_reshuffle = False
                 master_print("Finished updating sampler state.")
@@ -479,7 +550,14 @@ def main(argv):
                 and model_config.seq_modeling_block != "self_attention"
             )
 
-            train_state, loss, ttt_stats, grads_norm, learning_rate, sharded_rng = sharded_train_step(
+            (
+                train_state,
+                loss,
+                ttt_stats,
+                grads_norm,
+                learning_rate,
+                sharded_rng,
+            ) = sharded_train_step(
                 train_state, sharded_rng, batch, ttt_lr_mult, output_ttt_stats
             )
 
@@ -497,14 +575,22 @@ def main(argv):
                     for layer in range(len(ttt_stats)):
                         ttt_stats_layer = process_allgather(ttt_stats[layer])
                         n_mini_batch = len(ttt_stats_layer[0])
-                        x_axis = [model_config.mini_batch_size * i for i in range(1, n_mini_batch + 1)]
+                        x_axis = [
+                            model_config.mini_batch_size * i
+                            for i in range(1, n_mini_batch + 1)
+                        ]
                         log_ttt_stats(layer, ttt_stats_layer, x_axis, step)
 
-            if (FLAGS.save_checkpoint_freq > 0 and step % FLAGS.save_checkpoint_freq == 0) or (
-                step == FLAGS.total_steps
-            ):
+            if (
+                FLAGS.save_checkpoint_freq > 0
+                and step % FLAGS.save_checkpoint_freq == 0
+            ) or (step == FLAGS.total_steps):
                 master_print(f"Saving checkpoint at step {step}, do not kill...")
-                save_checkpoint(train_state, train_loader, step % FLAGS.save_milestone_freq == 0)
+                save_checkpoint(
+                    train_state,
+                    train_loader,
+                    step % FLAGS.save_milestone_freq == 0,
+                )
 
             if step == FLAGS.total_steps:
                 master_print("Training has completed!")

@@ -23,7 +23,9 @@ def scan_remat_every_n_iterations_scan(f, n, carry, x):
     Remat every n mini batches.
     """
     x_grouped = tree_map(lambda x: x.reshape((-1, n, *x.shape[1:])), x)
-    carry, y_grouped = jax.lax.scan(jax.remat(partial(jax.lax.scan, f), prevent_cse=False), carry, x_grouped)
+    carry, y_grouped = jax.lax.scan(
+        jax.remat(partial(jax.lax.scan, f), prevent_cse=False), carry, x_grouped
+    )
     y = tree_map(lambda x: x.reshape((-1, *x.shape[2:])), y_grouped)
     return carry, y
 
@@ -42,7 +44,9 @@ def get_multi_head_params(self, params, param_dtype, kernel_init="normal", std=0
             elif kernel_init == "ones":
                 initializer = nn.initializers.ones
             else:
-                raise NotImplementedError("Initializer %s Not Implemented." % (kernel_init))
+                raise NotImplementedError(
+                    "Initializer %s Not Implemented." % (kernel_init)
+                )
             p = self.param(k, initializer, new_shape, param_dtype)
         else:
             p = self.param(k, jax.nn.initializers.zeros, new_shape, param_dtype)
@@ -51,7 +55,9 @@ def get_multi_head_params(self, params, param_dtype, kernel_init="normal", std=0
     return params_init
 
 
-def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype: jnp.dtype = jnp.float32) -> jnp.ndarray:
+def precompute_freqs_cis(
+    dim: int, end: int, theta: float = 10000.0, dtype: jnp.dtype = jnp.float32
+) -> jnp.ndarray:
     freqs = 1.0 / (theta ** (np.arange(0, dim, 2)[: (dim // 2)].astype(dtype) / dim))
     t = np.arange(end)
     freqs = np.outer(t, freqs).astype(dtype)
@@ -61,9 +67,11 @@ def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0, dtype: jnp.
 
 
 def apply_rotary_emb(
-    xq: jnp.ndarray, xk: jnp.ndarray, freqs_cis: jnp.ndarray, dtype: jnp.dtype = jnp.float32
+    xq: jnp.ndarray,
+    xk: jnp.ndarray,
+    freqs_cis: jnp.ndarray,
+    dtype: jnp.dtype = jnp.float32,
 ) -> Tuple[jnp.ndarray, jnp.ndarray]:
-
     reshape_xq = xq.astype(jnp.float32).reshape(*xq.shape[:-1], -1, 2)
     reshape_xk = xk.astype(jnp.float32).reshape(*xk.shape[:-1], -1, 2)
 
@@ -73,17 +81,23 @@ def apply_rotary_emb(
     freqs_cis = jnp.reshape(freqs_cis, (*freqs_cis.shape[:2], 1, *freqs_cis.shape[2:]))
 
     xq_out = xq_ * freqs_cis
-    xq_out = jnp.stack((jnp.real(xq_out), jnp.imag(xq_out)), axis=-1).reshape(*xq_out.shape[:-1], -1)
+    xq_out = jnp.stack((jnp.real(xq_out), jnp.imag(xq_out)), axis=-1).reshape(
+        *xq_out.shape[:-1], -1
+    )
 
     xk_out = xk_ * freqs_cis
-    xk_out = jnp.stack((jnp.real(xk_out), jnp.imag(xk_out)), axis=-1).reshape(*xk_out.shape[:-1], -1)
+    xk_out = jnp.stack((jnp.real(xk_out), jnp.imag(xk_out)), axis=-1).reshape(
+        *xk_out.shape[:-1], -1
+    )
 
     return xq_out.astype(dtype), xk_out.astype(dtype)
 
 
 def diff_gelu(x):
     tanh_out = jnp.tanh(0.79788456 * x * (1 + 0.044715 * x * x))
-    ff = 0.5 * x * ((1 - tanh_out * tanh_out) * (0.79788456 + 0.1070322243 * x * x)) + 0.5 * (1 + tanh_out)
+    ff = 0.5 * x * (
+        (1 - tanh_out * tanh_out) * (0.79788456 + 0.1070322243 * x * x)
+    ) + 0.5 * (1 + tanh_out)
     return ff
 
 
@@ -97,7 +111,11 @@ class LinearLayerTemplate(nn.Module):
     @nn.compact
     def __call__(self, x):
         x = nn.Dense(
-            self.width, use_bias=self.use_bias, name=self.name, dtype=self.dtype, param_dtype=self.param_dtype
+            self.width,
+            use_bias=self.use_bias,
+            name=self.name,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )(x)
         return x
 
@@ -109,7 +127,9 @@ class LayerNormTemplate(nn.Module):
 
     @nn.compact
     def __call__(self, x):
-        x = nn.LayerNorm(name=self.name, dtype=self.dtype, param_dtype=self.param_dtype)(x)
+        x = nn.LayerNorm(
+            name=self.name, dtype=self.dtype, param_dtype=self.param_dtype
+        )(x)
         return x
 
 
@@ -127,17 +147,27 @@ class TTTBase(nn.Module):
         self.n_mini_batch = self.config.max_sequence_length // self.mini_batch_size
         self.seq_shape = (self.n_mini_batch, self.mini_batch_size)
         self.freqs_cis = precompute_freqs_cis(
-            self.head_dim, self.mini_batch_size * 2, theta=self.config.rope_theta, dtype=self.dtype
+            self.head_dim,
+            self.mini_batch_size * 2,
+            theta=self.config.rope_theta,
+            dtype=self.dtype,
         )
 
         self.setup_qkvo()
         self.setup_token_idx()
         self.setup_ttt_lr_gate()
 
-        self.ttt_norm = LayerNormTemplate(dtype=self.dtype, param_dtype=self.param_dtype)
-        ttt_norm_params = self.ttt_norm.init(jax.random.PRNGKey(0), jnp.ones([1, self.head_dim]))["params"]
+        self.ttt_norm = LayerNormTemplate(
+            dtype=self.dtype, param_dtype=self.param_dtype
+        )
+        ttt_norm_params = self.ttt_norm.init(
+            jax.random.PRNGKey(0), jnp.ones([1, self.head_dim])
+        )["params"]
         self.ttt_norm_params = get_multi_head_params(
-            self, ttt_norm_params, param_dtype=self.param_dtype, kernel_init="layer_norm"
+            self,
+            ttt_norm_params,
+            param_dtype=self.param_dtype,
+            kernel_init="layer_norm",
         )
         self.post_norm = nn.LayerNorm(dtype=self.dtype, param_dtype=self.param_dtype)
 
@@ -178,16 +208,27 @@ class TTTBase(nn.Module):
         )
 
     def setup_token_idx(self):
-        self.token_idx = 1.0 / jnp.arange(1, self.mini_batch_size + 1, dtype=jnp.float32)
+        self.token_idx = 1.0 / jnp.arange(
+            1, self.mini_batch_size + 1, dtype=jnp.float32
+        )
         self.learnable_token_idx = self.param(
-            "learnable_token_idx", nn.initializers.zeros, (self.mini_batch_size,), jnp.float32
+            "learnable_token_idx",
+            nn.initializers.zeros,
+            (self.mini_batch_size,),
+            jnp.float32,
         )
 
     def setup_ttt_lr_gate(self):
         self.learnable_ttt_lr = LinearLayerTemplate(
-            width=1, use_bias=True, name="learnable_ttt_lr", dtype=self.dtype, param_dtype=self.param_dtype
+            width=1,
+            use_bias=True,
+            name="learnable_ttt_lr",
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )
-        learnable_ttt_lr_params = self.learnable_ttt_lr.init(jax.random.PRNGKey(0), jnp.ones([1, self.width]))["params"]
+        learnable_ttt_lr_params = self.learnable_ttt_lr.init(
+            jax.random.PRNGKey(0), jnp.ones([1, self.width])
+        )["params"]
         self.learnable_ttt_lr_params = get_multi_head_params(
             self,
             learnable_ttt_lr_params,
@@ -197,13 +238,15 @@ class TTTBase(nn.Module):
         )
 
     def _split_heads(self, hidden_states):
-        return hidden_states.reshape(hidden_states.shape[:2] + (self.num_heads, self.head_dim))
+        return hidden_states.reshape(
+            hidden_states.shape[:2] + (self.num_heads, self.head_dim)
+        )
 
     def _split_mini_batches(self, hidden_states):
         B, N, num_head, head_dim = hidden_states.shape
-        hidden_states = hidden_states.reshape(B, *self.seq_shape, self.num_heads, self.head_dim).transpose(
-            0, 3, 1, 2, 4
-        )
+        hidden_states = hidden_states.reshape(
+            B, *self.seq_shape, self.num_heads, self.head_dim
+        ).transpose(0, 3, 1, 2, 4)
         return hidden_states
 
     def get_qkv_projections(self, batch):
@@ -212,7 +255,10 @@ class TTTBase(nn.Module):
 
     def get_eta(self, X):
         learnable_ttt_lr = vmap(
-            lambda x, p: self.learnable_ttt_lr.apply({"params": p}, x), axis_name="head", in_axes=[None, 0], out_axes=1
+            lambda x, p: self.learnable_ttt_lr.apply({"params": p}, x),
+            axis_name="head",
+            in_axes=[None, 0],
+            out_axes=1,
         )(X, self.learnable_ttt_lr_params)
         learnable_ttt_lr = nn.sigmoid(learnable_ttt_lr)
         learnable_ttt_lr = learnable_ttt_lr.transpose(0, 1, 2, 4, 3)
@@ -221,7 +267,9 @@ class TTTBase(nn.Module):
         token_idx = jnp.clip(token_idx, a_min=0.0)
 
         eta = (
-            (self.config.ttt_base_lr * token_idx).reshape(1, 1, 1, token_idx.shape[0], -1)
+            (self.config.ttt_base_lr * token_idx).reshape(
+                1, 1, 1, token_idx.shape[0], -1
+            )
             * learnable_ttt_lr
             / self.head_dim
         )
@@ -242,10 +290,14 @@ class TTTBase(nn.Module):
                 B, n_mini_batch, self.num_heads, self.head_dim
             )
             ssl_tgt_last_in_mini_batch = XV_last_in_mini_batch - XK_last_in_mini_batch
-            ssl_tgt_mean = (XV - XK).mean(axis=1, keepdims=True).reshape(B, 1, self.num_heads, self.head_dim)
-            ssl_tgt_last_in_mini_batch_from_mean_mse = ((ssl_tgt_last_in_mini_batch - ssl_tgt_mean) ** 2).mean(
-                axis=(0, 2, 3)
+            ssl_tgt_mean = (
+                (XV - XK)
+                .mean(axis=1, keepdims=True)
+                .reshape(B, 1, self.num_heads, self.head_dim)
             )
+            ssl_tgt_last_in_mini_batch_from_mean_mse = (
+                (ssl_tgt_last_in_mini_batch - ssl_tgt_mean) ** 2
+            ).mean(axis=(0, 2, 3))
         else:
             ssl_tgt_last_in_mini_batch_from_mean_mse = None
 
@@ -257,7 +309,9 @@ class TTTBase(nn.Module):
         XK = self._split_heads(XK)
         XV = self._split_heads(XV)
 
-        freqs_cis = jnp.take(self.freqs_cis, position_ids % self.mini_batch_size, axis=0)
+        freqs_cis = jnp.take(
+            self.freqs_cis, position_ids % self.mini_batch_size, axis=0
+        )
         XQ, XK = apply_rotary_emb(XQ, XK, freqs_cis=freqs_cis, dtype=self.dtype)
 
         XQ = self._split_mini_batches(XQ)
@@ -293,7 +347,9 @@ class TTTBase(nn.Module):
         @partial(vmap, axis_name="batch")
         def update_embed(XQ, XK, XV, eta):
             @partial(vmap, axis_name="head")
-            def parallelize_over_heads(XQ, XK, XV, eta, ttt_params_init, ttt_norm_params):
+            def parallelize_over_heads(
+                XQ, XK, XV, eta, ttt_params_init, ttt_norm_params
+            ):
                 def compute_mini_batch(ttt_params_mini_batch_init, inputs):
                     XQ_mini_batch = inputs["XQ"]
                     XK_mini_batch = inputs["XK"]
@@ -314,12 +370,22 @@ class TTTBase(nn.Module):
                 inputs = {"XQ": XQ, "XK": XK, "XV": XV, "eta": eta}
 
                 _, outputs = scan_remat_every_n_iterations_scan(
-                    compute_mini_batch, self.config.remat_mini_batch_group_size, ttt_params_init, inputs
+                    compute_mini_batch,
+                    self.config.remat_mini_batch_group_size,
+                    ttt_params_init,
+                    inputs,
                 )
                 Z, ttt_loss_mse_init, ttt_loss_mse_step_0, ttt_loss_mse_step_1 = outputs
-                return (Z.reshape(-1, self.head_dim), ttt_loss_mse_init, ttt_loss_mse_step_0, ttt_loss_mse_step_1)
+                return (
+                    Z.reshape(-1, self.head_dim),
+                    ttt_loss_mse_init,
+                    ttt_loss_mse_step_0,
+                    ttt_loss_mse_step_1,
+                )
 
-            outputs = parallelize_over_heads(XQ, XK, XV, eta, self.ttt_params, self.ttt_norm_params)
+            outputs = parallelize_over_heads(
+                XQ, XK, XV, eta, self.ttt_params, self.ttt_norm_params
+            )
             return outputs
 
         outputs = update_embed(XQ, XK, XV, eta)
@@ -344,7 +410,9 @@ class TTTBase(nn.Module):
     ):
         self.config.output_ttt_stats = output_ttt_stats
         del deterministic
-        XQ, XK, XV, eta, precompute_stats = self.get_ttt_inputs(hidden_states, position_ids=position_ids)
+        XQ, XK, XV, eta, precompute_stats = self.get_ttt_inputs(
+            hidden_states, position_ids=position_ids
+        )
         eta *= ttt_lr_mult
         Z, ttt_stats = self.ttt(XQ, XK, XV, eta, input_ids)
         Z = self.post_norm(Z)
@@ -362,7 +430,12 @@ class TTTLinearBase(TTTBase):
             (self.num_heads, self.head_dim, self.head_dim),
             self.param_dtype,
         )
-        self.b1 = self.param("ttt_bias_0", nn.initializers.zeros, (self.num_heads, 1, self.head_dim), self.param_dtype)
+        self.b1 = self.param(
+            "ttt_bias_0",
+            nn.initializers.zeros,
+            (self.num_heads, 1, self.head_dim),
+            self.param_dtype,
+        )
         self.ttt_params = (self.W1, self.b1)
 
     def process_mini_batch(
@@ -375,14 +448,15 @@ class TTTLinearBase(TTTBase):
         ttt_params_mini_batch_init,
         ttt_norm_params,
     ):
-
         W1_init, b1_init = ttt_params_mini_batch_init
         square_eta_mini_batch = eta_mini_batch[: self.mini_batch_size]
         last_eta_in_mini_batch = eta_mini_batch[-1][:, None]
 
         X1 = XK_mini_batch
         Z1 = X1 @ W1_init + b1_init
-        ttt_norm_out, ttt_norm_vjp = jax.vjp(lambda z: self.ttt_norm.apply({"params": ttt_norm_params}, z), Z1)
+        ttt_norm_out, ttt_norm_vjp = jax.vjp(
+            lambda z: self.ttt_norm.apply({"params": ttt_norm_params}, z), Z1
+        )
         ssl_target = XV_mini_batch - XK_mini_batch
         grad_l_wrt_ttt_norm_out = ttt_norm_out - ssl_target
         grad_l_wrt_Z1 = ttt_norm_vjp(grad_l_wrt_ttt_norm_out)[0]
@@ -404,19 +478,30 @@ class TTTLinearBase(TTTBase):
 
         X1_bar = XQ_mini_batch
         Attn1 = jnp.tril(X1_bar @ X1.transpose(1, 0))
-        b1_bar = b1_init - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn1))) @ grad_l_wrt_Z1
-        Z1_bar = X1_bar @ W1_init - (square_eta_mini_batch * Attn1) @ grad_l_wrt_Z1 + b1_bar
+        b1_bar = (
+            b1_init
+            - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn1))) @ grad_l_wrt_Z1
+        )
+        Z1_bar = (
+            X1_bar @ W1_init - (square_eta_mini_batch * Attn1) @ grad_l_wrt_Z1 + b1_bar
+        )
         ttt_norm_out_bar = self.ttt_norm.apply({"params": ttt_norm_params}, Z1_bar)
 
         output_mini_batch = X1_bar + ttt_norm_out_bar
 
-        W1_bar_last = W1_init - (last_eta_in_mini_batch * X1).transpose(1, 0) @ grad_l_wrt_Z1
-        b1_bar_last = b1_init - jnp.sum(last_eta_in_mini_batch * grad_l_wrt_Z1, axis=0, keepdims=True)
+        W1_bar_last = (
+            W1_init - (last_eta_in_mini_batch * X1).transpose(1, 0) @ grad_l_wrt_Z1
+        )
+        b1_bar_last = b1_init - jnp.sum(
+            last_eta_in_mini_batch * grad_l_wrt_Z1, axis=0, keepdims=True
+        )
 
         # Calculate ttt loss using the updated W_init by the current mini-batch
         if self.config.output_ttt_stats:
             X1_last_fwd_new = X1[-1:] @ W1_bar_last + b1_bar_last
-            X1_last_fwd_new = self.ttt_norm.apply({"params": ttt_norm_params}, X1_last_fwd_new)
+            X1_last_fwd_new = self.ttt_norm.apply(
+                {"params": ttt_norm_params}, X1_last_fwd_new
+            )
             ttt_loss_mse_step_1 = ((X1_last_fwd_new - ssl_target[-1:]) ** 2).mean()
         else:
             ttt_loss_mse_step_1 = None
@@ -425,7 +510,12 @@ class TTTLinearBase(TTTBase):
 
         return (
             ttt_params_mini_batch_new,
-            (output_mini_batch, ttt_loss_mse_init, ttt_loss_mse_step_0, ttt_loss_mse_step_1),
+            (
+                output_mini_batch,
+                ttt_loss_mse_init,
+                ttt_loss_mse_step_0,
+                ttt_loss_mse_step_1,
+            ),
         )
 
 
@@ -452,7 +542,9 @@ class TTTLinear(TTTLinearBase):
         )
         if self.config.remat_conv != "":
             conv_module = nn_partitioning.remat(
-                nn.Conv, policy=get_gradient_checkpoint_policy(self.config.remat_conv), prevent_cse=True
+                nn.Conv,
+                policy=get_gradient_checkpoint_policy(self.config.remat_conv),
+                prevent_cse=True,
             )
         else:
             conv_module = nn.Conv
@@ -514,7 +606,10 @@ class TTTMLPBase(TTTBase):
             self.param_dtype,
         )
         self.b1 = self.param(
-            "ttt_bias_0", nn.initializers.zeros, (self.num_heads, 1, 4 * self.head_dim), self.param_dtype
+            "ttt_bias_0",
+            nn.initializers.zeros,
+            (self.num_heads, 1, 4 * self.head_dim),
+            self.param_dtype,
         )
         self.W2 = self.param(
             "ttt_dense_1",
@@ -522,7 +617,12 @@ class TTTMLPBase(TTTBase):
             (self.num_heads, 4 * self.head_dim, self.head_dim),
             self.param_dtype,
         )
-        self.b2 = self.param("ttt_bias_1", nn.initializers.zeros, (self.num_heads, 1, self.head_dim), self.param_dtype)
+        self.b2 = self.param(
+            "ttt_bias_1",
+            nn.initializers.zeros,
+            (self.num_heads, 1, self.head_dim),
+            self.param_dtype,
+        )
         self.ttt_params = (self.W1, self.W2, self.b1, self.b2)
 
     def process_mini_batch(
@@ -535,7 +635,6 @@ class TTTMLPBase(TTTBase):
         ttt_params_mini_batch_init,
         ttt_norm_params,
     ):
-
         W1_init, W2_init, b1_init, b2_init = ttt_params_mini_batch_init
         square_eta_mini_batch = eta_mini_batch[: self.mini_batch_size]
         last_eta_in_mini_batch = eta_mini_batch[-1][:, None]
@@ -544,7 +643,9 @@ class TTTMLPBase(TTTBase):
         Z1 = X1 @ W1_init + b1_init
         X2 = nn.gelu(Z1)
         Z2 = X2 @ W2_init + b2_init
-        ttt_norm_out, ttt_norm_vjp = jax.vjp(lambda z: self.ttt_norm.apply({"params": ttt_norm_params}, z), Z2)
+        ttt_norm_out, ttt_norm_vjp = jax.vjp(
+            lambda z: self.ttt_norm.apply({"params": ttt_norm_params}, z), Z2
+        )
 
         ssl_target = XV_mini_batch - X1
         grad_l_wrt_ttt_norm_out = ttt_norm_out - ssl_target
@@ -569,25 +670,48 @@ class TTTMLPBase(TTTBase):
 
         X1_bar = XQ_mini_batch
         Attn1 = jnp.tril(X1_bar @ X1.transpose(1, 0))
-        b1_bar = b1_init - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn1))) @ grad_l_wrt_Z1
-        Z1_bar = X1_bar @ W1_init - (square_eta_mini_batch * Attn1) @ grad_l_wrt_Z1 + b1_bar
+        b1_bar = (
+            b1_init
+            - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn1))) @ grad_l_wrt_Z1
+        )
+        Z1_bar = (
+            X1_bar @ W1_init - (square_eta_mini_batch * Attn1) @ grad_l_wrt_Z1 + b1_bar
+        )
 
         X2_bar = nn.gelu(Z1_bar)
         Attn2 = jnp.tril(X2_bar @ X2.transpose(1, 0))
-        b2_bar = b2_init - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn2))) @ grad_l_wrt_Z2
-        Z2_bar = X2_bar @ W2_init - (square_eta_mini_batch * Attn2) @ grad_l_wrt_Z2 + b2_bar
+        b2_bar = (
+            b2_init
+            - (square_eta_mini_batch * jnp.tril(jnp.ones_like(Attn2))) @ grad_l_wrt_Z2
+        )
+        Z2_bar = (
+            X2_bar @ W2_init - (square_eta_mini_batch * Attn2) @ grad_l_wrt_Z2 + b2_bar
+        )
         ttt_norm_out_bar = self.ttt_norm.apply({"params": ttt_norm_params}, Z2_bar)
 
         output_mini_batch = X1_bar + ttt_norm_out_bar
 
-        W1_bar_last = W1_init - (last_eta_in_mini_batch * X1).transpose(1, 0) @ grad_l_wrt_Z1
-        W2_bar_last = W2_init - (last_eta_in_mini_batch * X2).transpose(1, 0) @ grad_l_wrt_Z2
-        b1_bar_last = b1_init - jnp.sum(last_eta_in_mini_batch * grad_l_wrt_Z1, axis=0, keepdims=True)
-        b2_bar_last = b2_init - jnp.sum(last_eta_in_mini_batch * grad_l_wrt_Z2, axis=0, keepdims=True)
+        W1_bar_last = (
+            W1_init - (last_eta_in_mini_batch * X1).transpose(1, 0) @ grad_l_wrt_Z1
+        )
+        W2_bar_last = (
+            W2_init - (last_eta_in_mini_batch * X2).transpose(1, 0) @ grad_l_wrt_Z2
+        )
+        b1_bar_last = b1_init - jnp.sum(
+            last_eta_in_mini_batch * grad_l_wrt_Z1, axis=0, keepdims=True
+        )
+        b2_bar_last = b2_init - jnp.sum(
+            last_eta_in_mini_batch * grad_l_wrt_Z2, axis=0, keepdims=True
+        )
 
         if self.config.output_ttt_stats:
-            X1_last_fwd_new = nn.gelu((X1[-1:] @ W1_bar_last) + b1_bar_last) @ W2_bar_last + b2_bar_last
-            X1_last_fwd_new = self.ttt_norm.apply({"params": ttt_norm_params}, X1_last_fwd_new)
+            X1_last_fwd_new = (
+                nn.gelu((X1[-1:] @ W1_bar_last) + b1_bar_last) @ W2_bar_last
+                + b2_bar_last
+            )
+            X1_last_fwd_new = self.ttt_norm.apply(
+                {"params": ttt_norm_params}, X1_last_fwd_new
+            )
             ttt_loss_mse_step_1 = ((X1_last_fwd_new - ssl_target[-1:]) ** 2).mean()
         else:
             ttt_loss_mse_step_1 = None
@@ -596,7 +720,12 @@ class TTTMLPBase(TTTBase):
 
         return (
             ttt_params_mini_batch_new,
-            (output_mini_batch, ttt_loss_mse_init, ttt_loss_mse_step_0, ttt_loss_mse_step_1),
+            (
+                output_mini_batch,
+                ttt_loss_mse_init,
+                ttt_loss_mse_step_0,
+                ttt_loss_mse_step_1,
+            ),
         )
 
 
@@ -623,7 +752,9 @@ class TTTMLP(TTTMLPBase):
         )
         if self.config.remat_conv != "":
             conv_module = nn_partitioning.remat(
-                nn.Conv, policy=get_gradient_checkpoint_policy(self.config.remat_conv), prevent_cse=True
+                nn.Conv,
+                policy=get_gradient_checkpoint_policy(self.config.remat_conv),
+                prevent_cse=True,
             )
         else:
             conv_module = nn.Conv

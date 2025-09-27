@@ -39,7 +39,9 @@ class StreamingCheckpointer(object):
             os.makedirs(os.path.dirname(path), exist_ok=True)
         else:
             path = "/dev/null"
-        self.save_train_state_to_file(train_state, path, gather_fns, self.config.float_dtype)
+        self.save_train_state_to_file(
+            train_state, path, gather_fns, self.config.float_dtype
+        )
 
     @staticmethod
     def save_train_state_to_file(train_state, path, gather_fns=None, float_dtype=None):
@@ -64,7 +66,9 @@ class StreamingCheckpointer(object):
             path = "/dev/null"
         mlxu.save_pickle(obj, path)
 
-    def save_all(self, train_state, gather_fns, metadata=None, dataset=None, milestone=False):
+    def save_all(
+        self, train_state, gather_fns, metadata=None, dataset=None, milestone=False
+    ):
         step = int(jax.device_get(train_state.step))
         if self.config.save_optimizer_state:
             checkpoint_state = train_state
@@ -79,16 +83,24 @@ class StreamingCheckpointer(object):
             # Save a milestone checkpoint that will not be overwritten
             self.save_pickle(metadata, f"step_{step}/metadata_{step}.pkl")
             self.save_pickle(dataset, f"step_{step}/dataset_{step}.pkl")
-            self.save_checkpoint(checkpoint_state, f"step_{step}/{checkpoint_name}_{step}", checkpoint_gather_fns)
+            self.save_checkpoint(
+                checkpoint_state,
+                f"step_{step}/{checkpoint_name}_{step}",
+                checkpoint_gather_fns,
+            )
             # Additionally save a checkpoint that can be overwritten for automatic resuming
             self.save_pickle(metadata, "metadata.pkl")
             self.save_pickle(dataset, "dataset.pkl")
-            self.save_checkpoint(checkpoint_state, f"{checkpoint_name}", checkpoint_gather_fns)
+            self.save_checkpoint(
+                checkpoint_state, f"{checkpoint_name}", checkpoint_gather_fns
+            )
         else:
             # Save a normal checkpoint that can be overwritten
             self.save_pickle(metadata, "metadata.pkl")
             self.save_pickle(dataset, "dataset.pkl")
-            self.save_checkpoint(checkpoint_state, f"{checkpoint_name}", checkpoint_gather_fns)
+            self.save_checkpoint(
+                checkpoint_state, f"{checkpoint_name}", checkpoint_gather_fns
+            )
 
     @staticmethod
     def load_checkpoint(path, target=None, shard_fns=None, remove_dict_prefix=None):
@@ -114,7 +126,9 @@ class StreamingCheckpointer(object):
                 flattend_train_state[key] = tensor
 
         if target is not None:
-            flattened_target = flatten_dict(to_state_dict(target), keep_empty_nodes=True)
+            flattened_target = flatten_dict(
+                to_state_dict(target), keep_empty_nodes=True
+            )
             for key, value in flattened_target.items():
                 if key not in flattend_train_state and value == empty_node:
                     flattend_train_state[key] = value
@@ -144,7 +158,11 @@ class StreamingCheckpointer(object):
 
     @classmethod
     def load_trainstate_checkpoint(
-        cls, load_from, trainstate_target=None, trainstate_shard_fns=None, disallow_trainstate=False
+        cls,
+        load_from,
+        trainstate_target=None,
+        trainstate_shard_fns=None,
+        disallow_trainstate=False,
     ):
         if trainstate_target is not None:
             params_target = trainstate_target.params["params"]
@@ -165,7 +183,9 @@ class StreamingCheckpointer(object):
 
         if load_type == "trainstate":
             # Load the entire train state in the streaming format
-            train_state = cls.load_checkpoint(path=load_path, target=trainstate_target, shard_fns=trainstate_shard_fns)
+            train_state = cls.load_checkpoint(
+                path=load_path, target=trainstate_target, shard_fns=trainstate_shard_fns
+            )
         elif load_type == "trainstate_params":
             # Load the params part of the train state in the streaming format
             restored_params = cls.load_checkpoint(
@@ -177,12 +197,16 @@ class StreamingCheckpointer(object):
             restored_params = flax.core.frozen_dict.freeze({"params": restored_params})
         elif load_type == "params":
             # Load the params in the streaming format
-            restored_params = cls.load_checkpoint(path=load_path, target=params_target, shard_fns=params_shard_fns)
+            restored_params = cls.load_checkpoint(
+                path=load_path, target=params_target, shard_fns=params_shard_fns
+            )
             restored_params = flax.core.frozen_dict.freeze({"params": restored_params})
         elif load_type == "flax_params":
             # Load the params in the standard flax format (non-streaming)
             # This requires the entire params to fit in memory
-            restored_params = cls.load_flax_checkpoint(path=load_path, target=params_target, shard_fns=params_shard_fns)
+            restored_params = cls.load_flax_checkpoint(
+                path=load_path, target=params_target, shard_fns=params_shard_fns
+            )
             restored_params = flax.core.frozen_dict.freeze({"params": restored_params})
         else:
             raise ValueError(f"Invalid load_from type: {load_type}")

@@ -17,19 +17,27 @@ class RandomFaultTolerantSampler(RandomSampler):
         super().__init__(*args, generator=generator, **kwargs)
         self.counter = 0  # Absolute position of data reading
         self.is_rollback = False
-        self.state = self.generator.get_state()  # Record the initial state of generator determined by seed
+        self.state = (
+            self.generator.get_state()
+        )  # Record the initial state of generator determined by seed
         # Should not be changed before an entire loop over dataset is done
         # Give same seed, generator state change deterministically after each torch.randperm
         self.shuffle_log = [{"shuffle_after": self.counter}]
 
     def state_dict(self):
-        return {"random_state": self.state, "counter": self.counter, "shuffle_log": self.shuffle_log}
+        return {
+            "random_state": self.state,
+            "counter": self.counter,
+            "shuffle_log": self.shuffle_log,
+        }
 
     def load_state_dict(self, state_dict):
         self.state = state_dict["random_state"]
         self.counter = state_dict["counter"]
         if "shuffle_log" in state_dict:
-            self.shuffle_log = state_dict["shuffle_log"]  # A list of shuffle records, each record is a dict
+            self.shuffle_log = state_dict[
+                "shuffle_log"
+            ]  # A list of shuffle records, each record is a dict
 
     def update_shuffle_history(self):
         self.shuffle_log.append({"shuffle_after": self.counter})
@@ -43,12 +51,13 @@ class RandomFaultTolerantSampler(RandomSampler):
         for shuffle_record in self.shuffle_log[1:]:
             shuffle_after = shuffle_record["shuffle_after"]
             new_order = torch.randperm(N - shuffle_after, generator=self.generator)  #
-            indices = torch.concatenate([indices[:shuffle_after], indices[shuffle_after:][new_order]])
+            indices = torch.concatenate(
+                [indices[:shuffle_after], indices[shuffle_after:][new_order]]
+            )
 
         return indices
 
     def __iter__(self) -> Iterator[int]:
-
         if self.is_rollback:
             # Before entering __iter__() due to rollback, set loader.sampler.is_rollback = True manually outside
             self.update_shuffle_history()  # Add a shuffle action at self.counter, which is where we resume from but need a different coming data order
@@ -63,7 +72,9 @@ class RandomFaultTolerantSampler(RandomSampler):
 
         # End of one loop over the entire dataset
         self.counter = 0
-        self.state = self.generator.get_state()  # If have the next epoch, state will definitely be different
+        self.state = (
+            self.generator.get_state()
+        )  # If have the next epoch, state will definitely be different
         self.shuffle_log = [{"shuffle_after": self.counter}]
 
 
@@ -88,7 +99,9 @@ class LMDataset(torch.utils.data.Dataset):
         idx = idx % self.ntokens
         start_idx = idx * self.seq_len
         seq_len = min(self.seq_len, self.ntokens - 1 - start_idx)
-        data = torch.as_tensor(self.tokens[start_idx : (start_idx + seq_len + 1)].astype(np.int32))
+        data = torch.as_tensor(
+            self.tokens[start_idx : (start_idx + seq_len + 1)].astype(np.int32)
+        )
         if self.llama2:
             return {
                 "input_tokens": data[:-1],

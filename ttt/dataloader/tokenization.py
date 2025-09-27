@@ -39,9 +39,7 @@ class TestLMDataModule:
         cache_dir = Path(
             "/mnt/disks/persistent/the_pile_release"
         )  # TODO: Fill in your path to save the tokenized dataset
-        raw_json_path = (
-            "/mnt/disks/persistent/PILE"
-        )  # TODO: Fill in your path that already stores the raw dataset in json format
+        raw_json_path = "/mnt/disks/persistent/PILE"  # TODO: Fill in your path that already stores the raw dataset in json format
         max_length = 2048
         num_workers = num_cpu_cores() // 2
         datamodule = LMDataModule(
@@ -82,9 +80,7 @@ class TestLMDataModule:
         cache_dir = Path(
             "/mnt/disks/persistent/books3_release"
         )  # TODO: fill in your path to save the tokenized dataset
-        raw_json_path = (
-            "/mnt/disks/persistent/lwm_raw/lwm_text_data/combined_books.jsonl"
-        )  # TODO: fill in your path that already stores the raw dataset in json format
+        raw_json_path = "/mnt/disks/persistent/lwm_raw/lwm_text_data/combined_books.jsonl"  # TODO: fill in your path that already stores the raw dataset in json format
         max_length = 2048
         num_workers = 1
         datamodule = LMDataModule(

@@ -20,8 +20,19 @@ from ml_collections import ConfigDict
 from mlxu import function_args_to_config, load_pickle, open_file
 
 from ttt.models.bpt import blockwise_ffn, blockwise_attn
-from ttt.infra.jax_utils import with_sharding_constraint, get_jax_mesh, get_gradient_checkpoint_policy
-from ttt.models.ttt_layer import TTTLinear, TTTMLP, TTTLinearBase, TTTMLPBase, precompute_freqs_cis, apply_rotary_emb
+from ttt.infra.jax_utils import (
+    with_sharding_constraint,
+    get_jax_mesh,
+    get_gradient_checkpoint_policy,
+)
+from ttt.models.ttt_layer import (
+    TTTLinear,
+    TTTMLP,
+    TTTLinearBase,
+    TTTMLPBase,
+    precompute_freqs_cis,
+    apply_rotary_emb,
+)
 
 
 @flax.struct.dataclass
@@ -244,7 +255,10 @@ class ModelConfig(PretrainedConfig):
         self.fcm_min_ratio = fcm_min_ratio
         self.fcm_max_ratio = fcm_max_ratio
         super().__init__(
-            bos_token_id=bos_token_id, eos_token_id=eos_token_id, tie_word_embeddings=tie_word_embeddings, **kwargs
+            bos_token_id=bos_token_id,
+            eos_token_id=eos_token_id,
+            tie_word_embeddings=tie_word_embeddings,
+            **kwargs,
         )
 
     @classmethod
@@ -327,7 +341,9 @@ class RMSNorm(nn.Module):
     param_dtype: jnp.dtype = jnp.float32
 
     def setup(self) -> None:
-        self.weight = self.param("kernel", nn.initializers.ones, (self.dim,), self.param_dtype)
+        self.weight = self.param(
+            "kernel", nn.initializers.ones, (self.dim,), self.param_dtype
+        )
 
     def _norm(self, x: jnp.ndarray) -> jnp.ndarray:
         return x * jax.lax.rsqrt(jnp.square(x).mean(-1, keepdims=True) + self.eps)
@@ -390,7 +406,9 @@ class ConvModule(nn.Module):
 
         if self.config.remat_conv != "":
             conv_module = nn_partitioning.remat(
-                nn.Conv, policy=get_gradient_checkpoint_policy(self.config.remat_conv), prevent_cse=True
+                nn.Conv,
+                policy=get_gradient_checkpoint_policy(self.config.remat_conv),
+                prevent_cse=True,
             )
         else:
             conv_module = nn.Conv
@@ -405,7 +423,10 @@ class ConvModule(nn.Module):
             precision=self.precision,
         )
         self.conv_norm = RMSNorm(
-            self.config.hidden_size, eps=self.config.rms_norm_eps, dtype=self.dtype, param_dtype=self.param_dtype
+            self.config.hidden_size,
+            eps=self.config.rms_norm_eps,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )
 
     def __call__(self, hidden_states):
@@ -462,14 +483,21 @@ class Attention(nn.Module):
 
         self.resid_dropout = nn.Dropout(rate=config.resid_pdrop)
 
-        self.causal_mask = make_causal_mask(jnp.ones((1, config.max_sequence_length), dtype="bool"), dtype="bool")
+        self.causal_mask = make_causal_mask(
+            jnp.ones((1, config.max_sequence_length), dtype="bool"), dtype="bool"
+        )
 
         self.freqs_cis = precompute_freqs_cis(
-            self.head_dim, config.max_sequence_length * 2, theta=config.rope_theta, dtype=self.dtype
+            self.head_dim,
+            config.max_sequence_length * 2,
+            theta=config.rope_theta,
+            dtype=self.dtype,
         )
 
     def _split_heads(self, hidden_states):
-        return hidden_states.reshape(hidden_states.shape[:2] + (self.num_heads, self.head_dim))
+        return hidden_states.reshape(
+            hidden_states.shape[:2] + (self.num_heads, self.head_dim)
+        )
 
     def _merge_heads(self, hidden_states):
         return hidden_states.reshape(hidden_states.shape[:2] + (self.embed_dim,))
@@ -483,9 +511,15 @@ class Attention(nn.Module):
         """
         # detect if we're initializing by absence of existing cache data.
         is_initialized = self.has_variable("cache", "cached_key")
-        cached_key = self.variable("cache", "cached_key", jnp.zeros, key.shape, key.dtype)
-        cached_value = self.variable("cache", "cached_value", jnp.zeros, value.shape, value.dtype)
-        cache_index = self.variable("cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32))
+        cached_key = self.variable(
+            "cache", "cached_key", jnp.zeros, key.shape, key.dtype
+        )
+        cached_value = self.variable(
+            "cache", "cached_value", jnp.zeros, value.shape, value.dtype
+        )
+        cache_index = self.variable(
+            "cache", "cache_index", lambda: jnp.array(0, dtype=jnp.int32)
+        )
 
         if is_initialized:
             *batch_dims, max_length, num_heads, depth_per_head = cached_key.value.shape
@@ -516,7 +550,11 @@ class Attention(nn.Module):
         output_attentions: bool = False,
         fcm_mask=None,
     ):
-        xq, xk, xv = (self.wq(hidden_states), self.wk(hidden_states), self.wv(hidden_states))
+        xq, xk, xv = (
+            self.wq(hidden_states),
+            self.wk(hidden_states),
+            self.wv(hidden_states),
+        )
 
         xq = with_sharding_constraint(xq, PS(("dp", "fsdp"), None, "mp"))
         xk = with_sharding_constraint(xk, PS(("dp", "fsdp"), None, "mp"))
@@ -534,7 +572,9 @@ class Attention(nn.Module):
         if not deterministic and self.config.attn_pdrop > 0.0:
             dropout_rng = self.make_rng("dropout")
 
-        if self.config.scan_attention and not (self.has_variable("cache", "cached_key") or init_cache):
+        if self.config.scan_attention and not (
+            self.has_variable("cache", "cached_key") or init_cache
+        ):
             # doesn't need blockwise attention if we are doing autoregressive decoding since no quadratic memory
 
             # attention mask without nxn materlization, blockwise_attn will handle the rest
@@ -543,7 +583,9 @@ class Attention(nn.Module):
             attention_bias = lax.select(
                 attention_mask > 0,
                 jnp.full(attention_mask.shape, 0.0).astype(self.dtype),
-                jnp.full(attention_mask.shape, jnp.finfo(self.dtype).min).astype(self.dtype),
+                jnp.full(attention_mask.shape, jnp.finfo(self.dtype).min).astype(
+                    self.dtype
+                ),
             )
             attn_weights = None
             attn_output = blockwise_attn(
@@ -563,7 +605,9 @@ class Attention(nn.Module):
                 float32_logits=True,
                 prevent_cse=True,
             )
-            attn_output = with_sharding_constraint(attn_output, PS(("dp", "fsdp"), None, "mp", None))
+            attn_output = with_sharding_constraint(
+                attn_output, PS(("dp", "fsdp"), None, "mp", None)
+            )
         else:
             query_length, key_length = xq.shape[1], xk.shape[1]
 
@@ -571,27 +615,37 @@ class Attention(nn.Module):
                 mask_shift = self.variables["cache"]["cache_index"]
                 max_decoder_length = self.variables["cache"]["cached_key"].shape[1]
                 causal_mask = lax.dynamic_slice(
-                    self.causal_mask, (0, 0, mask_shift, 0), (1, 1, query_length, max_decoder_length)
+                    self.causal_mask,
+                    (0, 0, mask_shift, 0),
+                    (1, 1, query_length, max_decoder_length),
                 )
             else:
                 causal_mask = self.causal_mask[:, :, :query_length, :key_length]
 
             batch_size = hidden_states.shape[0]
-            causal_mask = jnp.broadcast_to(causal_mask, (batch_size,) + causal_mask.shape[1:])
+            causal_mask = jnp.broadcast_to(
+                causal_mask, (batch_size,) + causal_mask.shape[1:]
+            )
 
-            attention_mask = jnp.broadcast_to(jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_mask.shape)
+            attention_mask = jnp.broadcast_to(
+                jnp.expand_dims(attention_mask, axis=(-3, -2)), causal_mask.shape
+            )
             attention_mask = combine_masks(attention_mask, causal_mask, fcm_mask)
 
             # During fast autoregressive decoding, we feed one position at a time,
             # and cache the keys and values step by step.
             if self.has_variable("cache", "cached_key") or init_cache:
-                xk, xv, attention_mask = self._concatenate_to_cache(xk, xv, xq, attention_mask)
+                xk, xv, attention_mask = self._concatenate_to_cache(
+                    xk, xv, xq, attention_mask
+                )
 
             # transform boolean mask into float mask
             attention_bias = lax.select(
                 attention_mask > 0,
                 jnp.full(attention_mask.shape, 0.0).astype(self.dtype),
-                jnp.full(attention_mask.shape, jnp.finfo(self.dtype).min).astype(self.dtype),
+                jnp.full(attention_mask.shape, jnp.finfo(self.dtype).min).astype(
+                    self.dtype
+                ),
             )
             attn_weights = dot_product_attention_weights(
                 xq,
@@ -603,8 +657,12 @@ class Attention(nn.Module):
                 dtype=jnp.promote_types(self.dtype, jnp.float32),
                 precision=self.precision,
             )
-            attn_weights = with_sharding_constraint(attn_weights, PS(("dp", "fsdp"), "mp", None, None))
-            attn_output = jnp.einsum("...hqk,...khd->...qhd", attn_weights, xv, precision=self.precision)
+            attn_weights = with_sharding_constraint(
+                attn_weights, PS(("dp", "fsdp"), "mp", None, None)
+            )
+            attn_output = jnp.einsum(
+                "...hqk,...khd->...qhd", attn_weights, xv, precision=self.precision
+            )
 
         attn_output = self._merge_heads(attn_output)
         attn_output = self.wo(attn_output)
@@ -636,7 +694,10 @@ class Block(nn.Module):
             seq_modeling_block = TTTMLPBase
 
         else:
-            raise NotImplementedError("Sequence Modeling Layer %s Not Implemented." % (self.config.seq_modeling_block))
+            raise NotImplementedError(
+                "Sequence Modeling Layer %s Not Implemented."
+                % (self.config.seq_modeling_block)
+            )
 
         mlp_module = SwiGLUMLP
 
@@ -660,20 +721,35 @@ class Block(nn.Module):
             )
 
         self.seq_modeling_block = seq_modeling_block(
-            self.config, dtype=self.dtype, param_dtype=self.param_dtype, precision=self.precision
+            self.config,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
+            precision=self.precision,
         )
         self.feed_forward = mlp_module(
-            self.config, dtype=self.dtype, param_dtype=self.param_dtype, precision=self.precision
+            self.config,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
+            precision=self.precision,
         )
         self.seq_norm = RMSNorm(
-            self.config.hidden_size, eps=self.config.rms_norm_eps, dtype=self.dtype, param_dtype=self.param_dtype
+            self.config.hidden_size,
+            eps=self.config.rms_norm_eps,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )
         self.ffn_norm = RMSNorm(
-            self.config.hidden_size, eps=self.config.rms_norm_eps, dtype=self.dtype, param_dtype=self.param_dtype
+            self.config.hidden_size,
+            eps=self.config.rms_norm_eps,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )
         if self.config.pre_conv:
             self.conv = ConvModule(
-                self.config, dtype=self.dtype, param_dtype=self.param_dtype, precision=self.precision
+                self.config,
+                dtype=self.dtype,
+                param_dtype=self.param_dtype,
+                precision=self.precision,
             )
 
     def __call__(
@@ -707,7 +783,12 @@ class Block(nn.Module):
             )
         else:
             seq_modeling_outputs = self.seq_modeling_block(
-                hidden_states_pre_normed, input_ids, position_ids, deterministic, output_ttt_stats, ttt_lr_mult
+                hidden_states_pre_normed,
+                input_ids,
+                position_ids,
+                deterministic,
+                output_ttt_stats,
+                ttt_lr_mult,
             )
 
         seq_modeling_output = seq_modeling_outputs[0]
@@ -716,10 +797,15 @@ class Block(nn.Module):
         feed_forward_input = self.ffn_norm(hidden_states)
         if self.config.scan_mlp:
             feed_forward_hidden_states = blockwise_ffn(
-                self.feed_forward, feed_forward_input, self.config.scan_mlp_chunk_size, deterministic
+                self.feed_forward,
+                feed_forward_input,
+                self.config.scan_mlp_chunk_size,
+                deterministic,
             )
         else:
-            feed_forward_hidden_states = self.feed_forward(feed_forward_input, deterministic)
+            feed_forward_hidden_states = self.feed_forward(
+                feed_forward_input, deterministic
+            )
         feed_forward_hidden_states = with_sharding_constraint(
             feed_forward_hidden_states, PS(("dp", "fsdp"), None, "mp")
         )
@@ -744,10 +830,18 @@ class BlockCollection(nn.Module):
         block = Block
         if self.config.remat_block != "":
             block = remat(
-                Block, static_argnums=(5, 6, 7, 8), policy=get_gradient_checkpoint_policy(self.config.remat_block)
+                Block,
+                static_argnums=(5, 6, 7, 8),
+                policy=get_gradient_checkpoint_policy(self.config.remat_block),
             )
         self.blocks = [
-            block(self.config, name=str(i), dtype=self.dtype, param_dtype=self.param_dtype, precision=self.precision)
+            block(
+                self.config,
+                name=str(i),
+                dtype=self.dtype,
+                param_dtype=self.param_dtype,
+                precision=self.precision,
+            )
             for i in range(self.config.num_hidden_layers)
         ]
 
@@ -777,7 +871,12 @@ class BlockCollection(nn.Module):
                 minval=self.config.fcm_min_ratio,
                 maxval=self.config.fcm_max_ratio,
             )
-            fcm_mask = jax.random.uniform(self.make_rng("fcm"), shape=(batch_size, 1, 1, seq_length)) > fcm_ratio
+            fcm_mask = (
+                jax.random.uniform(
+                    self.make_rng("fcm"), shape=(batch_size, 1, 1, seq_length)
+                )
+                > fcm_ratio
+            )
             fcm_mask = fcm_mask.at[:, :, :, 0].set(True)
             fcm_mask = fcm_mask.astype("bool")
         else:
@@ -822,14 +921,24 @@ class Model(nn.Module):
         self.wte = nn.Embed(
             self.config.vocab_size,
             self.config.hidden_size,
-            embedding_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            embedding_init=jax.nn.initializers.normal(
+                stddev=self.config.initializer_range
+            ),
             dtype=self.dtype,
             param_dtype=self.param_dtype,
         )
         self.dropout = nn.Dropout(rate=self.config.embd_pdrop)
-        self.h = BlockCollection(self.config, dtype=self.dtype, param_dtype=self.param_dtype, precision=self.precision)
+        self.h = BlockCollection(
+            self.config,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
+            precision=self.precision,
+        )
         self.ln_f = RMSNorm(
-            self.config.hidden_size, eps=self.config.rms_norm_eps, dtype=self.dtype, param_dtype=self.param_dtype
+            self.config.hidden_size,
+            eps=self.config.rms_norm_eps,
+            dtype=self.dtype,
+            param_dtype=self.param_dtype,
         )
 
     def __call__(
@@ -873,7 +982,10 @@ class Model(nn.Module):
             return tuple(v for v in outputs if v is not None)
 
         return BaseModelOutput(
-            last_hidden_state=hidden_states, hidden_states=outputs[1], attentions=outputs[2], ttt_stats=outputs[3]
+            last_hidden_state=hidden_states,
+            hidden_states=outputs[1],
+            attentions=outputs[2],
+            ttt_stats=outputs[3],
         )
 
 
@@ -890,7 +1002,9 @@ class CausalLM(nn.Module):
             dtype=self.dtype,
             param_dtype=self.param_dtype,
             use_bias=False,
-            kernel_init=jax.nn.initializers.normal(stddev=self.config.initializer_range),
+            kernel_init=jax.nn.initializers.normal(
+                stddev=self.config.initializer_range
+            ),
             precision=self.precision,
         )
 
@@ -912,7 +1026,8 @@ class CausalLM(nn.Module):
             attention_mask = jnp.ones_like(input_ids)
         if position_ids is None:
             position_ids = jnp.broadcast_to(
-                jnp.clip(jnp.cumsum(attention_mask, axis=-1) - 1, a_min=0), (batch_size, seq_length)
+                jnp.clip(jnp.cumsum(attention_mask, axis=-1) - 1, a_min=0),
+                (batch_size, seq_length),
             )
         outputs = self.model(
             input_ids,
@@ -931,7 +1046,9 @@ class CausalLM(nn.Module):
 
         if self.config.tie_word_embeddings:
             shared_kernel = self.model.variables["params"]["wte"]["embedding"].T
-            lm_logits = self.lm_head.apply({"params": {"kernel": shared_kernel}}, hidden_states)
+            lm_logits = self.lm_head.apply(
+                {"params": {"kernel": shared_kernel}}, hidden_states
+            )
         else:
             lm_logits = self.lm_head(hidden_states)
 
