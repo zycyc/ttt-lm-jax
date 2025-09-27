@@ -1,22 +1,21 @@
 #!/bin/bash
 
-DATA_PATH=TODO
-DATA_NAME="the_pile" # "books3" 
+DATA_PATH=/data/users/alan/ttt-lm-jax/llama-2-pile
+DATA_NAME="the_pile" # "books3"
 
 # Product should equal 0.5 million
 SEQ_LEN=2048
-BS=256
+BS=64
 
 # Experiment details
-EXP_NAME=TODO
-EXP_DIR=TODO
+EXP_NAME=ttt_linear_125m
+EXP_DIR=/data/users/alan/ttt-lm-jax/experiments
 
-sudo mkdir -p /${EXP_DIR}/${EXP_NAME} && sudo chmod -R 777 ${EXP_DIR}/${EXP_NAME};
-cd ../..
+export CUDA_VISIBLE_DEVICES=4,5,6,7
 
 python3 -m ttt.train \
         --mesh_dim='!-1,1,1' \
-        --dtype='fp32' \
+        --dtype='bf16' \
         --total_steps=4800 \
         --save_checkpoint_freq=1000 \
         --save_milestone_freq=2000 \

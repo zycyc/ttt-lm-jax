@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jax.sharding import PartitionSpec as PS
 from jax.sharding import Mesh
 from jax.experimental import mesh_utils
-from jax.experimental.pjit import with_sharding_constraint as _with_sharding_constraint
+from jax.lax import with_sharding_constraint as _with_sharding_constraint
 from jax.experimental.pjit import pjit
 from jax.interpreters import pxla
 import numpy as np
@@ -133,14 +133,21 @@ def make_shard_and_gather_fns(partition_specs, dtype_specs=None):
         return shard_fn
 
     def make_gather_fn(partition_spec, dtype_spec=None):
-        jax_gather_fn = pjit(
-            make_to_dtype_fn(dtype_spec),
-            in_shardings=partition_spec,
-            out_shardings=None,
-        )
-
+        # More robust gather function for JAX 0.7.2
         def gather_fn(tensor):
-            return jax.device_get(jax_gather_fn(tensor))
+            # First convert to desired dtype if specified
+            if dtype_spec is not None:
+                tensor = make_to_dtype_fn(dtype_spec)(tensor)
+
+            # For gathering, we want to collect all shards to a single device
+            # Use multihost_utils for proper gathering across devices
+            try:
+                from jax.experimental.multihost_utils import process_allgather
+                gathered = process_allgather(tensor)
+                return jax.device_get(gathered)
+            except:
+                # Fallback: simple device_get (works if already on single device)
+                return jax.device_get(tensor)
 
         return gather_fn
 
